@@ -1,10 +1,11 @@
 name: Azure Container Registry
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
+  workflow_run:
+    workflows:
+      - Playwright
+    types:
+      - completed
   workflow_dispatch:
 
 permissions:
@@ -17,7 +18,10 @@ env:
 jobs:
   docker-build:
     name: Build Docker images
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
 
     strategy:
@@ -36,6 +40,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -46,12 +52,19 @@ jobs:
           context: ./${{ matrix.service.context }}
           file: ./${{ matrix.service.dockerfile }}
           push: false
-          tags: ${{ matrix.service.image }}:pr-${{ github.event.pull_request.number }}
+          tags: ${{ matrix.service.image }}:pr-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.run_number }}
           cache-from: type=gha,scope=${{ matrix.service.image }}
 
   acr-publish:
     name: Publish Docker images to ACR
-    if: github.event_name != 'pull_request'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
     runs-on: ubuntu-latest
 
     permissions:
@@ -74,11 +87,29 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Validate ACR configuration
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           if [ -z "$ACR_NAME" ]; then
             echo "Missing repository variable: AZURE_CONTAINER_REGISTRY_NAME" >&2
+            exit 1
+          fi
+          if [ -z "$AZURE_CLIENT_ID" ]; then
+            echo "Missing repository secret: AZURE_CLIENT_ID" >&2
+            exit 1
+          fi
+          if [ -z "$AZURE_TENANT_ID" ]; then
+            echo "Missing repository secret: AZURE_TENANT_ID" >&2
+            exit 1
+          fi
+          if [ -z "$AZURE_SUBSCRIPTION_ID" ]; then
+            echo "Missing repository secret: AZURE_SUBSCRIPTION_ID" >&2
             exit 1
           fi
 
@@ -102,7 +133,7 @@ jobs:
         with:
           images: ${{ env.ACR_LOGIN_SERVER }}/${{ matrix.service.image }}
           tags: |
-            type=sha,prefix=sha-
+            type=raw,value=sha-${{ github.event.workflow_run.head_sha || github.sha }}
             type=ref,event=branch
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 

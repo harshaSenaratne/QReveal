@@ -55,8 +55,8 @@ jobs:
           tags: ${{ matrix.service.image }}:pr-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.run_number }}
           cache-from: type=gha,scope=${{ matrix.service.image }}
 
-  acr-publish:
-    name: Publish Docker images to ACR
+  acr-publish-backend:
+    name: Publish backend image to ACR
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (
@@ -71,18 +71,10 @@ jobs:
       contents: read
       id-token: write
 
-    strategy:
-      fail-fast: false
-      matrix:
-        service:
-          - name: Backend API
-            image: qreveal-backend
-            context: backend
-            dockerfile: backend/Dockerfile
-          - name: Frontend App
-            image: qreveal-frontend
-            context: frontend
-            dockerfile: frontend/Dockerfile
+    env:
+      SERVICE_IMAGE: qreveal-backend
+      SERVICE_CONTEXT: backend
+      SERVICE_DOCKERFILE: backend/Dockerfile
 
     steps:
       - name: Checkout repository
@@ -114,12 +106,13 @@ jobs:
           fi
 
       - name: Log in to Azure
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           auth-type: SERVICE_PRINCIPAL
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: false
 
       - name: Log in to Azure Container Registry
         run: az acr login --name "$ACR_NAME"
@@ -131,19 +124,106 @@ jobs:
         id: docker_meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.ACR_LOGIN_SERVER }}/${{ matrix.service.image }}
+          images: ${{ env.ACR_LOGIN_SERVER }}/${{ env.SERVICE_IMAGE }}
           tags: |
             type=raw,value=sha-${{ github.event.workflow_run.head_sha || github.sha }}
             type=ref,event=branch
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build and push ${{ matrix.service.name }} image
+      - name: Build and push backend image
         uses: docker/build-push-action@v6
         with:
-          context: ./${{ matrix.service.context }}
-          file: ./${{ matrix.service.dockerfile }}
+          context: ./${{ env.SERVICE_CONTEXT }}
+          file: ./${{ env.SERVICE_DOCKERFILE }}
           push: true
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.service.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service.image }}
+          cache-from: type=gha,scope=${{ env.SERVICE_IMAGE }}
+          cache-to: type=gha,mode=max,scope=${{ env.SERVICE_IMAGE }}
+
+  acr-publish-frontend:
+    name: Publish frontend image to ACR
+    needs: acr-publish-backend
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      SERVICE_IMAGE: qreveal-frontend
+      SERVICE_CONTEXT: frontend
+      SERVICE_DOCKERFILE: frontend/Dockerfile
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Validate ACR configuration
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          if [ -z "$ACR_NAME" ]; then
+            echo "Missing repository variable: AZURE_CONTAINER_REGISTRY_NAME" >&2
+            exit 1
+          fi
+          if [ -z "$AZURE_CLIENT_ID" ]; then
+            echo "Missing repository secret: AZURE_CLIENT_ID" >&2
+            exit 1
+          fi
+          if [ -z "$AZURE_TENANT_ID" ]; then
+            echo "Missing repository secret: AZURE_TENANT_ID" >&2
+            exit 1
+          fi
+          if [ -z "$AZURE_SUBSCRIPTION_ID" ]; then
+            echo "Missing repository secret: AZURE_SUBSCRIPTION_ID" >&2
+            exit 1
+          fi
+
+      - name: Log in to Azure
+        uses: azure/login@v3
+        with:
+          auth-type: SERVICE_PRINCIPAL
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: false
+
+      - name: Log in to Azure Container Registry
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare Docker image metadata
+        id: docker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ACR_LOGIN_SERVER }}/${{ env.SERVICE_IMAGE }}
+          tags: |
+            type=raw,value=sha-${{ github.event.workflow_run.head_sha || github.sha }}
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ env.SERVICE_CONTEXT }}
+          file: ./${{ env.SERVICE_DOCKERFILE }}
+          push: true
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ env.SERVICE_IMAGE }}
+          cache-to: type=gha,mode=max,scope=${{ env.SERVICE_IMAGE }}

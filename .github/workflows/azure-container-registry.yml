@@ -115,7 +115,16 @@ jobs:
           allow-no-subscriptions: false
 
       - name: Log in to Azure Container Registry
-        run: az acr login --name "$ACR_NAME"
+        shell: bash
+        run: |
+          acr_host="${ACR_LOGIN_SERVER%%.*}"
+          acr_prefix="${ACR_NAME}-"
+
+          if [[ "$acr_host" == "$acr_prefix"* ]]; then
+            az acr login --name "$ACR_NAME" --suffix "${acr_host#"$acr_prefix"}"
+          else
+            az acr login --name "$ACR_NAME"
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -202,7 +211,16 @@ jobs:
           allow-no-subscriptions: false
 
       - name: Log in to Azure Container Registry
-        run: az acr login --name "$ACR_NAME"
+        shell: bash
+        run: |
+          acr_host="${ACR_LOGIN_SERVER%%.*}"
+          acr_prefix="${ACR_NAME}-"
+
+          if [[ "$acr_host" == "$acr_prefix"* ]]; then
+            az acr login --name "$ACR_NAME" --suffix "${acr_host#"$acr_prefix"}"
+          else
+            az acr login --name "$ACR_NAME"
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

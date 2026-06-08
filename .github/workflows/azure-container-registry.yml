@@ -13,7 +13,7 @@ permissions:
 
 env:
   ACR_NAME: ${{ vars.AZURE_CONTAINER_REGISTRY_NAME }}
-  ACR_LOGIN_SERVER: ${{ vars.AZURE_CONTAINER_REGISTRY_NAME }}.azurecr.io
+  ACR_LOGIN_SERVER: ${{ vars.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER }}.azurecr.io
 
 jobs:
   docker-build:

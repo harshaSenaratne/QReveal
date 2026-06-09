@@ -1,6 +1,6 @@
 import type { QRExtractResponse } from "@/lib/types";
 
-const apiURL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+const apiURL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export async function extractQR(file: File): Promise<QRExtractResponse> {
   const formData = new FormData();
